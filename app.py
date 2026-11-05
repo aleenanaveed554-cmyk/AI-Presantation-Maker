@@ -1,622 +1,343 @@
 import streamlit as st
-import json
-import io
-import re
 from openai import OpenAI
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from reportlab.lib.pagesizes import landscape, A4
+from pptx.dml.color import RGBColor
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import simpleSplit
+from io import BytesIO
+import json
 
-
-# --------------------------------------------------
-# PAGE CONFIG
-# --------------------------------------------------
-
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="AI Presentation Maker",
-    page_icon="🎨",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_icon="🎓",
+    layout="wide"
 )
 
-
-# --------------------------------------------------
-# CUSTOM CSS
-# --------------------------------------------------
-
+# ---------------- DESIGN ----------------
 st.markdown("""
 <style>
-
 .stApp {
-    background:
-        radial-gradient(circle at top left, #24104f 0%, transparent 35%),
-        radial-gradient(circle at bottom right, #101d52 0%, transparent 40%),
-        #080d24;
+    background: linear-gradient(135deg, #0b1024, #172554, #312e81);
     color: white;
 }
-
-.main-title {
-    font-size: 52px;
-    font-weight: 800;
-    text-align: center;
-    margin-top: 20px;
-    background: linear-gradient(90deg, #7c3aed, #3b82f6, #ec4899);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+h1, h2, h3, p, label {
+    color: white !important;
 }
-
-.subtitle {
-    text-align: center;
-    color: #b8bfd8;
-    font-size: 18px;
-    margin-bottom: 35px;
+.block-container {
+    padding-top: 2rem;
 }
-
-.card {
-    background: rgba(255,255,255,0.07);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 20px;
-    padding: 25px;
-    margin-bottom: 20px;
-    backdrop-filter: blur(15px);
-}
-
-.slide-card {
-    background: linear-gradient(
-        135deg,
-        rgba(124,58,237,0.18),
-        rgba(37,99,235,0.12)
-    );
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 18px;
-    padding: 20px;
-    margin-bottom: 20px;
-}
-
-.slide-number {
-    color: #a78bfa;
-    font-weight: bold;
-    font-size: 14px;
-}
-
-.slide-title {
-    font-size: 26px;
-    font-weight: 700;
+.stButton > button {
+    background: linear-gradient(90deg, #6366f1, #a855f7);
     color: white;
-}
-
-.small-text {
-    color: #aeb7d5;
-}
-
-div.stButton > button {
-    width: 100%;
     border: none;
-    border-radius: 12px;
-    padding: 12px 20px;
-    font-weight: 700;
+    border-radius: 10px;
+    padding: 12px 24px;
+    font-weight: bold;
+}
+.stButton > button:hover {
+    background: #818cf8;
     color: white;
-    background: linear-gradient(90deg, #7c3aed, #2563eb);
-    transition: 0.3s;
 }
-
-div.stButton > button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0px 8px 25px rgba(124,58,237,0.35);
-}
-
 </style>
 """, unsafe_allow_html=True)
 
+# ---------------- HEADER ----------------
+st.title("🎓 AI Presentation Maker")
+st.markdown(
+    "Create professional presentations in seconds with the power of AI."
+)
 
-# --------------------------------------------------
-# SESSION STATE
-# --------------------------------------------------
+# ---------------- SIDEBAR ----------------
+with st.sidebar:
+    st.header("⚙️ Presentation Settings")
 
-if "slides" not in st.session_state:
-    st.session_state.slides = []
-
-if "generated" not in st.session_state:
-    st.session_state.generated = False
-
-
-# --------------------------------------------------
-# OPENAI CLIENT
-# --------------------------------------------------
-
-def get_client():
-
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
-
-    if not api_key:
-        return None
-
-    return OpenAI(api_key=api_key)
-
-
-# --------------------------------------------------
-# AI GENERATION
-# --------------------------------------------------
-
-def generate_presentation(topic, number_of_slides, language, template):
-
-    client = get_client()
-
-    if client is None:
-        st.error(
-            "OPENAI_API_KEY nahi mili. Streamlit Secrets mein API key add karein."
-        )
-        return []
-
-    prompt = f"""
-Create a professional presentation.
-
-Topic: {topic}
-
-Number of slides: {number_of_slides}
-
-Language: {language}
-
-Template style: {template}
-
-Return ONLY valid JSON.
-
-Format:
-
-{{
-  "slides": [
-    {{
-      "title": "Slide title",
-      "content": [
-        "Point 1",
-        "Point 2",
-        "Point 3",
-        "Point 4"
-      ]
-    }}
-  ]
-}}
-
-Requirements:
-- Make the presentation professional.
-- Use clear and useful information.
-- Avoid very long paragraphs.
-- Each slide should contain 3-5 important points.
-- Create a logical flow.
-- Include an introduction and conclusion.
-- Write everything in the requested language.
-"""
-
-    try:
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a professional presentation designer."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.7
-        )
-
-        result = response.choices[0].message.content
-
-        # Remove possible markdown JSON fences
-        result = re.sub(r"```json|```", "", result).strip()
-
-        data = json.loads(result)
-
-        return data.get("slides", [])
-
-    except Exception as e:
-
-        st.error(f"AI generation error: {e}")
-        return []
-
-
-# --------------------------------------------------
-# PPTX EXPORT
-# --------------------------------------------------
-
-def create_pptx(slides, topic):
-
-    prs = Presentation()
-
-    # 16:9
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
-
-    for index, slide_data in enumerate(slides):
-
-        slide = prs.slides.add_slide(
-            prs.slide_layouts[6]
-        )
-
-        # Background
-        background = slide.background
-        fill = background.fill
-        fill.solid()
-        fill.fore_color.rgb = __import__(
-            "pptx"
-        ).dml.color.RGBColor(10, 15, 40)
-
-        # Slide number
-        box = slide.shapes.add_textbox(
-            Inches(0.6),
-            Inches(0.4),
-            Inches(1.5),
-            Inches(0.4)
-        )
-
-        p = box.text_frame.paragraphs[0]
-        p.text = f"SLIDE {index + 1}"
-        p.font.size = Pt(12)
-        p.font.bold = True
-        p.font.color.rgb = __import__(
-            "pptx"
-        ).dml.color.RGBColor(167, 139, 250)
-
-        # Title
-        title_box = slide.shapes.add_textbox(
-            Inches(0.6),
-            Inches(1.0),
-            Inches(12),
-            Inches(1.2)
-        )
-
-        tf = title_box.text_frame
-        p = tf.paragraphs[0]
-        p.text = slide_data["title"]
-        p.font.size = Pt(30)
-        p.font.bold = True
-        p.font.color.rgb = __import__(
-            "pptx"
-        ).dml.color.RGBColor(255, 255, 255)
-
-        # Content
-        content_box = slide.shapes.add_textbox(
-            Inches(0.8),
-            Inches(2.3),
-            Inches(11.8),
-            Inches(4.5)
-        )
-
-        tf = content_box.text_frame
-        tf.word_wrap = True
-
-        for i, point in enumerate(slide_data["content"]):
-
-            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-
-            p.text = "• " + point
-            p.font.size = Pt(20)
-            p.font.color.rgb = __import__(
-                "pptx"
-            ).dml.color.RGBColor(220, 225, 245)
-
-            p.space_after = Pt(15)
-
-    output = io.BytesIO()
-    prs.save(output)
-    output.seek(0)
-
-    return output
-
-
-# --------------------------------------------------
-# PDF EXPORT
-# --------------------------------------------------
-
-def create_pdf(slides, topic):
-
-    output = io.BytesIO()
-
-    c = canvas.Canvas(
-        output,
-        pagesize=landscape(A4)
+    language = st.selectbox(
+        "Presentation Language",
+        ["English", "Urdu", "Roman Urdu"]
     )
 
-    width, height = landscape(A4)
-
-    for index, slide_data in enumerate(slides):
-
-        # Dark background
-        c.setFillColorRGB(0.04, 0.06, 0.16)
-        c.rect(0, 0, width, height, fill=1)
-
-        # Slide number
-        c.setFillColorRGB(0.65, 0.55, 0.98)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(
-            45,
-            height - 45,
-            f"SLIDE {index + 1}"
-        )
-
-        # Title
-        c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica-Bold", 25)
-
-        c.drawString(
-            45,
-            height - 90,
-            slide_data["title"]
-        )
-
-        # Content
-        y = height - 145
-
-        c.setFont("Helvetica", 16)
-
-        for point in slide_data["content"]:
-
-            # Simple line wrapping
-            words = point.split()
-            line = ""
-
-            lines = []
-
-            for word in words:
-
-                test_line = line + word + " "
-
-                if c.stringWidth(test_line, "Helvetica", 16) < width - 100:
-                    line = test_line
-
-                else:
-                    lines.append(line)
-                    line = word + " "
-
-            if line:
-                lines.append(line)
-
-            for line in lines:
-
-                c.setFillColorRGB(
-                    0.85,
-                    0.87,
-                    0.95
-                )
-
-                c.drawString(
-                    60,
-                    y,
-                    "• " + line
-                )
-
-                y -= 25
-
-            y -= 10
-
-        c.showPage()
-
-    c.save()
-
-    output.seek(0)
-
-    return output
-
-
-# --------------------------------------------------
-# SIDEBAR
-# --------------------------------------------------
-
-with st.sidebar:
-
-    st.markdown("## 🎨 AI Presentation Maker")
-
-    st.markdown("---")
-
-    st.markdown("### ⚙️ Presentation Settings")
-
-    number_of_slides = st.slider(
-        "Number of slides",
+    slide_count = st.slider(
+        "Number of Slides",
         min_value=3,
         max_value=15,
         value=6
     )
 
-    language = st.selectbox(
-        "Presentation Language",
-        [
-            "English",
-            "Urdu",
-            "Roman Urdu",
-            "Arabic",
-            "French",
-            "Spanish"
-        ]
+    audience = st.selectbox(
+        "Presentation Audience",
+        ["University Students", "Teachers", "Professionals"]
     )
 
-    template = st.selectbox(
-        "Choose Template",
-        [
-            "Modern Dark",
-            "Corporate Blue",
-            "Creative Purple",
-            "Minimal Professional",
-            "Technology",
-            "Education"
-        ]
+    style = st.selectbox(
+        "Presentation Style",
+        ["Modern", "Academic", "Minimal", "Creative"]
     )
 
-    st.markdown("---")
+    st.info("Enter a topic to generate your presentation.")
 
-    st.info(
-        "💡 Tip: Topic ko specific rakhein taake AI zyada useful presentation generate kare."
-    )
-
-
-# --------------------------------------------------
-# HOMEPAGE
-# --------------------------------------------------
-
-st.markdown(
-    '<div class="main-title">AI Presentation Maker</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitle">Create professional presentations with AI in seconds.</div>',
-    unsafe_allow_html=True
-)
-
-
-# --------------------------------------------------
-# INPUT SECTION
-# --------------------------------------------------
-
-st.markdown(
-    '<div class="card">',
-    unsafe_allow_html=True
-)
-
-st.markdown("### ✨ Create Your Presentation")
-
+# ---------------- TOPIC INPUT ----------------
 topic = st.text_input(
-    "Presentation Topic",
-    placeholder="Example: Artificial Intelligence in Education"
+    "Enter Your Presentation Topic",
+    placeholder="e.g. Artificial Intelligence in Education"
 )
 
-generate_button = st.button(
-    "🚀 Generate Presentation"
-)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
-
-# --------------------------------------------------
-# GENERATE
-# --------------------------------------------------
-
-if generate_button:
+# ---------------- GENERATE PRESENTATION ----------------
+if st.button("✨ Generate Presentation", use_container_width=True):
 
     if not topic.strip():
-
         st.warning("Please enter a presentation topic.")
+        st.stop()
 
-    else:
+    if "OPENAI_API_KEY" not in st.secrets:
+        st.error(
+            "OpenAI API key nahi mili. "
+            "Streamlit Secrets mein OPENAI_API_KEY add karein."
+        )
+        st.stop()
 
-        with st.spinner("AI presentation generate kar raha hai..."):
+    client = OpenAI(
+        api_key=st.secrets["OPENAI_API_KEY"]
+    )
 
-            slides = generate_presentation(
-                topic,
-                number_of_slides,
-                language,
-                template
+    prompt = f"""
+    Create a professional presentation for {audience}.
+
+    Topic: {topic}
+    Number of slides: {slide_count}
+    Language: {language}
+    Style: {style}
+
+    Return ONLY valid JSON in this format:
+    {{
+        "title": "Presentation title",
+        "slides": [
+            {{
+                "title": "Slide title",
+                "points": [
+                    "Point 1",
+                    "Point 2",
+                    "Point 3"
+                ]
+            }}
+        ]
+    }}
+
+    Requirements:
+    - Include an introduction slide.
+    - Explain the topic clearly.
+    - Use short, meaningful bullet points.
+    - Include examples where useful.
+    - Include a conclusion slide.
+    - Do not use markdown.
+    - Keep the presentation suitable for a university audience.
+    """
+
+    try:
+        with st.spinner("AI is creating your presentation..."):
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a professional presentation designer."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                response_format={"type": "json_object"}
             )
 
-        if slides:
+            result = json.loads(
+                response.choices[0].message.content
+            )
 
-            st.session_state.slides = slides
-            st.session_state.generated = True
+            st.session_state["presentation"] = result
 
-            st.success("🎉 Presentation successfully generated!")
+    except Exception as e:
+        st.error(f"Presentation generate nahi hui: {e}")
 
+# ---------------- DISPLAY & EDIT SLIDES ----------------
+if "presentation" in st.session_state:
 
-# --------------------------------------------------
-# DISPLAY SLIDES
-# --------------------------------------------------
+    presentation = st.session_state["presentation"]
 
-if st.session_state.generated:
+    st.success("Your presentation is ready!")
 
-    st.markdown("## 📑 Your Presentation")
+    st.subheader("📝 Edit Your Presentation")
 
-    for index, slide in enumerate(
-        st.session_state.slides
-    ):
+    presentation["title"] = st.text_input(
+        "Presentation Title",
+        value=presentation.get("title", topic)
+    )
 
-        st.markdown(
-            f"""
-            <div class="slide-card">
-                <div class="slide-number">
-                    SLIDE {index + 1}
-                </div>
-                <div class="slide-title">
-                    {slide["title"]}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    for index, slide in enumerate(presentation["slides"]):
 
-        new_title = st.text_input(
-            f"Slide {index + 1} Title",
-            value=slide["title"],
-            key=f"title_{index}"
-        )
+        with st.expander(
+            f"Slide {index + 1}: {slide.get('title', '')}",
+            expanded=False
+        ):
 
-        new_content = st.text_area(
-            f"Slide {index + 1} Content",
-            value="\n".join(slide["content"]),
-            height=150,
-            key=f"content_{index}"
-        )
+            slide["title"] = st.text_input(
+                "Slide Title",
+                value=slide.get("title", ""),
+                key=f"title_{index}"
+            )
 
-        slide["title"] = new_title
+            points_text = st.text_area(
+                "Slide Points (one point per line)",
+                value="\n".join(slide.get("points", [])),
+                height=150,
+                key=f"points_{index}"
+            )
 
-        slide["content"] = [
-            line.strip()
-            for line in new_content.split("\n")
-            if line.strip()
-        ]
+            slide["points"] = [
+                point.strip()
+                for point in points_text.split("\n")
+                if point.strip()
+            ]
 
+    # ---------------- POWERPOINT EXPORT ----------------
+    def create_pptx(data):
+        prs = Presentation()
 
-    # --------------------------------------------------
-    # EXPORT
-    # --------------------------------------------------
+        for index, slide_data in enumerate(data["slides"]):
 
-    st.markdown("---")
+            if index == 0:
+                slide = prs.slides.add_slide(
+                    prs.slide_layouts[0]
+                )
+                slide.shapes.title.text = data["title"]
+                slide.placeholders[1].text = (
+                    slide_data.get("title", "")
+                )
+            else:
+                slide = prs.slides.add_slide(
+                    prs.slide_layouts[1]
+                )
 
-    st.markdown("## 📥 Export Presentation")
+                slide.shapes.title.text = slide_data.get(
+                    "title", ""
+                )
+
+                body = slide.placeholders[1].text_frame
+                body.clear()
+
+                for point in slide_data.get("points", []):
+                    paragraph = body.add_paragraph()
+                    paragraph.text = point
+                    paragraph.level = 0
+                    paragraph.font.size = Pt(22)
+
+            # Professional colors
+            background = slide.background
+            background.fill.solid()
+            background.fill.fore_color.rgb = RGBColor(
+                15, 23, 42
+            )
+
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for paragraph in shape.text_frame.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.color.rgb = RGBColor(
+                                255, 255, 255
+                            )
+
+        output = BytesIO()
+        prs.save(output)
+        output.seek(0)
+        return output
+
+    # ---------------- PDF EXPORT ----------------
+    def create_pdf(data):
+        output = BytesIO()
+        pdf = canvas.Canvas(output, pagesize=A4)
+
+        width, height = A4
+
+        for slide_data in data["slides"]:
+
+            pdf.setFillColorRGB(0.05, 0.08, 0.20)
+            pdf.rect(0, 0, width, height, fill=1)
+
+            pdf.setFillColorRGB(1, 1, 1)
+            pdf.setFont("Helvetica-Bold", 22)
+
+            y = height - 80
+
+            for line in simpleSplit(
+                slide_data.get("title", ""),
+                "Helvetica-Bold",
+                22,
+                width - 100
+            ):
+                pdf.drawString(50, y, line)
+                y -= 30
+
+            y -= 25
+
+            pdf.setFont("Helvetica", 14)
+
+            for point in slide_data.get("points", []):
+
+                lines = simpleSplit(
+                    "• " + point,
+                    "Helvetica",
+                    14,
+                    width - 100
+                )
+
+                for line in lines:
+                    if y < 70:
+                        pdf.showPage()
+                        pdf.setFillColorRGB(0.05, 0.08, 0.20)
+                        pdf.rect(0, 0, width, height, fill=1)
+                        pdf.setFillColorRGB(1, 1, 1)
+                        y = height - 70
+
+                    pdf.drawString(50, y, line)
+                    y -= 25
+
+                y -= 10
+
+            pdf.showPage()
+
+        pdf.save()
+        output.seek(0)
+        return output
+
+    # ---------------- DOWNLOAD BUTTONS ----------------
+    st.subheader("📥 Download Presentation")
 
     col1, col2 = st.columns(2)
 
     with col1:
-
-        pptx_file = create_pptx(
-            st.session_state.slides,
-            topic
-        )
+        pptx_file = create_pptx(presentation)
 
         st.download_button(
-            label="📊 Download PowerPoint",
+            "📊 Download PowerPoint",
             data=pptx_file,
             file_name="AI_Presentation.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True
         )
 
     with col2:
-
-        pdf_file = create_pdf(
-            st.session_state.slides,
-            topic
-        )
+        pdf_file = create_pdf(presentation)
 
         st.download_button(
-            label="📄 Download PDF",
+            "📄 Download PDF",
             data=pdf_file,
             file_name="AI_Presentation.pdf",
-            mime="application/pdf"
+            mime="application/pdf",
+            use_container_width=True
         )
 
-
-# --------------------------------------------------
-# FOOTER
-# --------------------------------------------------
-
-st.markdown(
-    """
-    <br><br>
-    <div style="text-align:center;color:#7f89aa;">
-        AI Presentation Maker • Built with Python + Streamlit
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("---")
+st.caption("AI Presentation Maker | Powered by Streamlit and OpenAI")
