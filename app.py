@@ -1,7 +1,7 @@
 import streamlit as st
-import json
-import os
-from openai import OpenAI
+from ai_generator import generate_presentation
+from presentation_builder import build_pptx, build_pdf
+
 
 # =========================================================
 # PAGE CONFIG
@@ -13,6 +13,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 # =========================================================
 # CUSTOM CSS
@@ -31,7 +32,7 @@ st.markdown("""
     padding-bottom: 4rem;
 }
 
-/* Main Hero */
+/* HERO */
 
 .hero {
     background: linear-gradient(
@@ -40,21 +41,32 @@ st.markdown("""
         #1d4ed8 50%,
         #2563eb 100%
     );
+
     padding: 45px;
     border-radius: 25px;
     color: white;
+
     margin-bottom: 30px;
-    box-shadow: 0 15px 45px rgba(37, 99, 235, 0.25);
+
+    box-shadow:
+        0 15px 45px rgba(37, 99, 235, 0.25);
 }
 
 .hero-badge {
     display: inline-block;
+
     background: rgba(255,255,255,0.15);
+
     border: 1px solid rgba(255,255,255,0.25);
+
     padding: 7px 14px;
+
     border-radius: 50px;
+
     font-size: 12px;
+
     font-weight: 700;
+
     letter-spacing: 2px;
 }
 
@@ -68,60 +80,97 @@ st.markdown("""
     opacity: 0.9;
 }
 
-/* Cards */
 
-.card {
+/* SLIDE PREVIEW */
+
+.slide-card {
     background: white;
-    padding: 25px;
-    border-radius: 20px;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
-}
 
-/* Slide Preview */
-
-.slide {
-    background: white;
     border-radius: 18px;
-    padding: 25px;
-    min-height: 240px;
+
+    padding: 22px;
+
+    min-height: 250px;
+
     border: 1px solid #e5e7eb;
-    box-shadow: 0 8px 25px rgba(15, 23, 42, 0.07);
+
+    box-shadow:
+        0 8px 25px rgba(15, 23, 42, 0.07);
+
     margin-bottom: 20px;
 }
 
 .slide-number {
     color: #2563eb;
-    font-size: 12px;
+
+    font-size: 11px;
+
     font-weight: 800;
+
     letter-spacing: 2px;
 }
 
 .slide-title {
     color: #111827;
-    font-size: 24px;
+
+    font-size: 22px;
+
     font-weight: 800;
+
     margin-top: 8px;
 }
 
 .slide-subtitle {
     color: #64748b;
-    font-size: 14px;
+
+    font-size: 13px;
+
     margin: 5px 0 15px 0;
 }
 
-.bullet {
+.slide-bullet {
     color: #334155;
-    font-size: 14px;
-    margin: 8px 0;
+
+    font-size: 13px;
+
+    margin: 7px 0;
 }
 
-/* Buttons */
+
+/* BUTTONS */
 
 .stButton > button {
     border-radius: 12px;
+
     font-weight: 700;
+
     min-height: 45px;
+}
+
+
+/* DOWNLOAD BUTTONS */
+
+.stDownloadButton > button {
+    border-radius: 12px;
+
+    font-weight: 700;
+
+    min-height: 48px;
+}
+
+
+/* INFO BOX */
+
+.info-box {
+    background: white;
+
+    padding: 20px;
+
+    border-radius: 18px;
+
+    border: 1px solid #e5e7eb;
+
+    margin-bottom: 20px;
 }
 
 </style>
@@ -140,152 +189,23 @@ if "generated" not in st.session_state:
 
 
 # =========================================================
-# OPENAI CLIENT
-# =========================================================
-
-def get_openai_client():
-
-    try:
-        api_key = st.secrets["OPENAI_API_KEY"]
-
-        return OpenAI(api_key=api_key)
-
-    except Exception:
-        return None
-
-
-# =========================================================
-# AI PRESENTATION GENERATOR
-# =========================================================
-
-def generate_presentation(topic, number_of_slides, language, audience):
-
-    client = get_openai_client()
-
-    if client is None:
-        st.error(
-            "OPENAI_API_KEY nahi mili. "
-            "Streamlit Settings → Secrets mein API key add karein."
-        )
-        return []
-
-    prompt = f"""
-Create a professional university-level presentation.
-
-Topic:
-{topic}
-
-Number of slides:
-{number_of_slides}
-
-Language:
-{language}
-
-Audience:
-{audience}
-
-Create a logical presentation structure.
-
-The presentation should include:
-
-1. Title / introduction
-2. Background
-3. Main concepts
-4. Important information
-5. Examples
-6. Applications
-7. Benefits or impact
-8. Challenges
-9. Future perspective
-10. Conclusion
-
-Do not make every slide follow the exact same structure.
-
-Each slide should contain:
-
-- title
-- subtitle
-- 3 to 5 short bullet points
-- speaker notes
-
-Keep the content professional, accurate and easy to understand.
-
-Return ONLY valid JSON.
-
-Use exactly this structure:
-
-{{
-    "slides": [
-        {{
-            "title": "Slide title",
-            "subtitle": "Short subtitle",
-            "bullets": [
-                "Point 1",
-                "Point 2",
-                "Point 3",
-                "Point 4"
-            ],
-            "speaker_notes": "Speaker notes"
-        }}
-    ]
-}}
-"""
-
-    try:
-
-        response = client.chat.completions.create(
-            model=st.secrets.get(
-                "OPENAI_MODEL",
-                "gpt-4.1-mini"
-            ),
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an expert presentation designer "
-                        "and academic content writer."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.7,
-            response_format={"type": "json_object"}
-        )
-
-        result = response.choices[0].message.content
-
-        data = json.loads(result)
-
-        return data.get("slides", [])
-
-    except Exception as e:
-
-        st.error(f"AI generation error: {e}")
-
-        return []
-
-
-# =========================================================
-# HERO SECTION
+# HERO
 # =========================================================
 
 st.markdown("""
 <div class="hero">
 
-<div class="hero-badge">
-AI PRESENTATION STUDIO
-</div>
+    <div class="hero-badge">
+        AI PRESENTATION STUDIO
+    </div>
 
-<h1>
-🎓 AI Presentation Maker
-</h1>
+    <h1>
+        🎓 AI Presentation Maker
+    </h1>
 
-<p>
-Turn any topic into a professional university-level presentation.
-</p>
+    <p>
+        Turn any topic into a professional university-level presentation.
+    </p>
 
 </div>
 """, unsafe_allow_html=True)
@@ -338,34 +258,41 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("""
-### 💡 Example Topics
+    st.markdown("### 💡 Example Topics")
 
-- Artificial Intelligence
-- Climate Change
-- Digital Marketing
-- Cyber Security
-- Machine Learning
-- Renewable Energy
-- Social Media
-- E-Commerce
-""")
+    st.markdown("""
+    • Artificial Intelligence
+
+    • Climate Change
+
+    • Digital Marketing
+
+    • Cyber Security
+
+    • Machine Learning
+
+    • Renewable Energy
+
+    • Social Media
+
+    • E-Commerce
+    """)
 
 
 # =========================================================
-# TOPIC INPUT
+# TOPIC
 # =========================================================
 
 st.markdown("## 📝 Create Your Presentation")
 
 topic = st.text_input(
-    "Enter your topic",
+    "Enter your presentation topic",
     placeholder="Example: Artificial Intelligence in Education"
 )
 
 
 # =========================================================
-# GENERATE BUTTON
+# GENERATE
 # =========================================================
 
 if st.button(
@@ -376,78 +303,89 @@ if st.button(
 
     if not topic.strip():
 
-        st.warning("Please enter a presentation topic.")
+        st.warning(
+            "⚠️ Please enter a presentation topic first."
+        )
 
     else:
 
         with st.spinner(
-            "🤖 AI is creating your professional presentation..."
+            "🤖 AI is creating your presentation..."
         ):
 
             slides = generate_presentation(
-                topic,
-                number_of_slides,
-                language,
-                audience
+                topic=topic,
+                number_of_slides=number_of_slides,
+                language=language,
+                audience=audience
             )
 
             if slides:
 
                 st.session_state.slides = slides
+
                 st.session_state.generated = True
 
                 st.success(
-                    "🎉 Presentation successfully generated!"
+                    "🎉 Presentation generated successfully!"
                 )
 
 
 # =========================================================
-# PRESENTATION EDITOR
+# PRESENTATION
 # =========================================================
 
-if st.session_state.generated and st.session_state.slides:
-
-    st.divider()
-
-    st.markdown("## 🖼️ Slide Preview")
+if (
+    st.session_state.generated
+    and st.session_state.slides
+):
 
     slides = st.session_state.slides
 
-    # Preview in 3 columns
+    st.divider()
 
-    cols = st.columns(3)
+    # =====================================================
+    # PREVIEW
+    # =====================================================
+
+    st.markdown("## 🖼️ Slide Preview")
+
+    preview_columns = st.columns(3)
 
     for index, slide in enumerate(slides):
 
-        with cols[index % 3]:
+        with preview_columns[index % 3]:
 
             bullets_html = ""
 
-            for bullet in slide.get("bullets", []):
+            for bullet in slide.get(
+                "bullets",
+                []
+            ):
 
                 bullets_html += f"""
-                <div class="bullet">
-                • {bullet}
+                <div class="slide-bullet">
+                    • {bullet}
                 </div>
                 """
 
             st.markdown(
                 f"""
-                <div class="slide">
+                <div class="slide-card">
 
-                <div class="slide-number">
-                SLIDE {index + 1:02d}
-                </div>
+                    <div class="slide-number">
+                        SLIDE {index + 1:02d}
+                    </div>
 
-                <div class="slide-title">
-                {slide.get("title", "")}
-                </div>
+                    <div class="slide-title">
+                        {slide.get("title", "")}
+                    </div>
 
-                <div class="slide-subtitle">
-                {slide.get("subtitle", "")}
-                </div>
+                    <div class="slide-subtitle">
+                        {slide.get("subtitle", "")}
+                    </div>
 
-                {bullets_html}
+                    {bullets_html}
 
                 </div>
                 """,
@@ -456,41 +394,55 @@ if st.session_state.generated and st.session_state.slides:
 
 
     # =====================================================
-    # EDIT SLIDES
+    # EDITOR
     # =====================================================
 
     st.divider()
 
-    st.markdown("## ✏️ Edit Your Slides")
+    st.markdown("## ✏️ Edit Slides")
+
+    st.caption(
+        "Aap har slide ka title, subtitle, bullet points "
+        "aur speaker notes edit kar sakti hain."
+    )
 
     for i, slide in enumerate(slides):
 
         with st.expander(
-            f"Slide {i + 1}: {slide.get('title', '')}"
+            f"Slide {i + 1} — {slide.get('title', 'Untitled')}"
         ):
 
-            title = st.text_input(
+            new_title = st.text_input(
                 "Slide Title",
-                value=slide.get("title", ""),
+                value=slide.get(
+                    "title",
+                    ""
+                ),
                 key=f"title_{i}"
             )
 
-            subtitle = st.text_input(
+            new_subtitle = st.text_input(
                 "Subtitle",
-                value=slide.get("subtitle", ""),
+                value=slide.get(
+                    "subtitle",
+                    ""
+                ),
                 key=f"subtitle_{i}"
             )
 
-            bullets = st.text_area(
+            new_bullets = st.text_area(
                 "Bullet Points — one point per line",
                 value="\n".join(
-                    slide.get("bullets", [])
+                    slide.get(
+                        "bullets",
+                        []
+                    )
                 ),
-                height=150,
+                height=140,
                 key=f"bullets_{i}"
             )
 
-            notes = st.text_area(
+            new_notes = st.text_area(
                 "Speaker Notes",
                 value=slide.get(
                     "speaker_notes",
@@ -500,88 +452,180 @@ if st.session_state.generated and st.session_state.slides:
                 key=f"notes_{i}"
             )
 
-            slide["title"] = title
-            slide["subtitle"] = subtitle
+            slide["title"] = new_title
+
+            slide["subtitle"] = new_subtitle
 
             slide["bullets"] = [
-                x.strip()
-                for x in bullets.split("\n")
-                if x.strip()
+                item.strip()
+                for item in new_bullets.splitlines()
+                if item.strip()
             ]
 
-            slide["speaker_notes"] = notes
+            slide["speaker_notes"] = new_notes
 
 
     # =====================================================
-    # ADD SLIDE
+    # ADD / DELETE SLIDES
     # =====================================================
 
-    if st.button("➕ Add New Slide"):
+    st.markdown("### 🛠️ Slide Management")
 
-        slides.append(
-            {
-                "title": "New Slide",
-                "subtitle": "Add your subtitle",
-                "bullets": [
-                    "Add your first point",
-                    "Add your second point",
-                    "Add your third point"
-                ],
-                "speaker_notes": ""
-            }
-        )
+    add_col, delete_col = st.columns(2)
 
-        st.rerun()
+    with add_col:
+
+        if st.button(
+            "➕ Add New Slide",
+            use_container_width=True
+        ):
+
+            slides.append(
+                {
+                    "title": "New Slide",
+                    "subtitle": "Add your subtitle",
+                    "bullets": [
+                        "Add your first point",
+                        "Add your second point",
+                        "Add your third point"
+                    ],
+                    "speaker_notes": ""
+                }
+            )
+
+            st.rerun()
+
+
+    with delete_col:
+
+        if len(slides) > 1:
+
+            if st.button(
+                "🗑️ Delete Last Slide",
+                use_container_width=True
+            ):
+
+                slides.pop()
+
+                st.rerun()
 
 
     # =====================================================
-    # EXPORT SECTION
+    # EXPORT
     # =====================================================
 
     st.divider()
 
-    st.markdown("## 📥 Download")
+    st.markdown("## 📥 Download Your Presentation")
 
-    st.info(
-        "PowerPoint aur PDF export ko hum next files mein connect karenge."
+    st.markdown(
+        """
+        <div class="info-box">
+        Your edited presentation can be exported as a professional
+        PowerPoint file or PDF file.
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-    col1, col2 = st.columns(2)
+    export_col1, export_col2 = st.columns(2)
 
-    with col1:
 
-        presentation_json = json.dumps(
-            slides,
-            indent=2,
-            ensure_ascii=False
-        )
+    # =====================================================
+    # POWERPOINT
+    # =====================================================
 
-        st.download_button(
-            "⬇️ Download Presentation Data",
-            data=presentation_json,
-            file_name="presentation.json",
-            mime="application/json",
-            use_container_width=True
-        )
+    with export_col1:
 
-    with col2:
+        try:
 
-        st.download_button(
-            "⬇️ Download Content",
-            data="\n\n".join(
-                [
-                    f"{i + 1}. {s['title']}\n"
-                    + "\n".join(
-                        f"• {b}"
-                        for b in s["bullets"]
-                    )
-                    for i, s in enumerate(slides)
-                ]
-            ),
-            file_name="presentation.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
+            pptx_file = build_pptx(
+                slides=slides,
+                topic=topic,
+                theme=theme
+            )
+
+            st.download_button(
+                label="📊 Download PowerPoint",
+                data=pptx_file,
+                file_name="AI_Presentation.pptx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "presentationml.presentation"
+                ),
+                use_container_width=True
+            )
+
+        except Exception as error:
+
+            st.error(
+                f"PowerPoint export error: {error}"
+            )
+
+
+    # =====================================================
+    # PDF
+    # =====================================================
+
+    with export_col2:
+
+        try:
+
+            pdf_file = build_pdf(
+                slides=slides,
+                topic=topic,
+                theme=theme
+            )
+
+            st.download_button(
+                label="📄 Download PDF",
+                data=pdf_file,
+                file_name="AI_Presentation.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+        except Exception as error:
+
+            st.error(
+                f"PDF export error: {error}"
+            )
+
+
+    # =====================================================
+    # JSON BACKUP
+    # =====================================================
+
+    st.markdown("### 💾 Presentation Backup")
+
+    st.download_button(
+        label="⬇️ Download Presentation JSON",
+        data=str(slides),
+        file_name="presentation_backup.json",
+        mime="application/json"
+    )
+
+
+# =========================================================
+# EMPTY STATE
+# =========================================================
+
+else:
+
+    st.markdown("""
+    <div class="info-box">
+
+    ### 🚀 Ready to create?
+
+    Enter any topic above and click
+    <b>Generate Presentation</b>.
+
+    AI will create the slide content automatically,
+    then you can edit the slides and download them
+    as PowerPoint or PDF.
+
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # =========================================================
@@ -592,9 +636,18 @@ st.markdown("---")
 
 st.markdown(
     """
-<div style="text-align:center;color:#64748b;padding:15px;">
-AI Presentation Maker • Built with Python + Streamlit + AI
-</div>
-""",
+    <div style="
+        text-align:center;
+        color:#64748b;
+        padding:15px;
+        font-size:13px;
+    ">
+
+        🎓 AI Presentation Maker
+        <br>
+        Built with Python • Streamlit • OpenAI
+
+    </div>
+    """,
     unsafe_allow_html=True
 )
